@@ -31,7 +31,7 @@ fi
 
 if ! command -v apt >/dev/null 2>&1; then
 	printf "This installer expects a Debian/Ubuntu based system (apt not found).\n"
-	printf "On other distributions, install python3/python3-venv and swig manually and then run:\n"
+	printf "On other distributions, install python3/python3-venv, swig and the lgpio C library (liblgpio-dev) manually and then run:\n"
 	printf "    python3 -m venv %s\n" "$VENV_DIR"
 	printf "    %s/bin/pip install rpi-lgpio apa102 psutil %s/library\n" "$VENV_DIR" "$DIR"
 	exit 1
@@ -39,13 +39,15 @@ fi
 
 # 1. System build/runtime dependencies via apt.
 #
-# swig + build-essential + python3-dev are needed to compile the `lgpio` C
-# extension from source. On newer Python (e.g. 3.14 on Ubuntu 26.04 / aarch64)
-# there is no prebuilt lgpio wheel yet, so pip builds it locally and the build
-# invokes swig.
+# On newer Python (e.g. 3.14 on Ubuntu 26.04 / aarch64) there is no prebuilt
+# `lgpio` wheel yet, so pip builds it from source. That build needs:
+#   * build-essential + python3-dev : C compiler and Python headers
+#   * swig                          : generates the C wrapper (lgpio_wrap.c)
+#   * liblgpio-dev                  : the lgpio C library to link against (-llgpio)
+# This matches the Raspberry Pi / gpiozero recommended build dependencies.
 printf "Installing system dependencies...\n"
 apt update
-apt install -y python3 python3-venv python3-dev python3-pip build-essential swig
+apt install -y python3 python3-venv python3-dev python3-pip build-essential swig liblgpio-dev
 
 # The classic python3-rpi.gpio package clashes with rpi-lgpio and no longer
 # works on current kernels. We only touch it if it is actually installed.
