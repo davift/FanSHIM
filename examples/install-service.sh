@@ -19,7 +19,10 @@ VENV="${FANSHIM_VENV:-/opt/fanshim/venv}"
 ON_THRESHOLD_SET=false
 OFF_THRESHOLD_SET=false
 
-SERVICE_PATH=/etc/systemd/system/pimoroni-fanshim.service
+SERVICE_NAME=fanshim.service
+SERVICE_PATH=/etc/systemd/system/$SERVICE_NAME
+# Name used by older versions of this installer.
+LEGACY_SERVICE=pimoroni-fanshim.service
 
 USAGE="sudo ./install-service.sh --off-threshold <n> --on-threshold <n> --delay <n> --brightness <n> --low-temp <n> --high-temp <n> --venv <python_virtual_environment> (--preempt) (--noled) (--nobutton) (--extended-colours)"
 
@@ -203,7 +206,7 @@ EOF
 
 read -r -d '' UNIT_FILE << EOF
 [Unit]
-Description=Fan Shim Service
+Description=Fan SHIM temperature control
 After=multi-user.target
 
 [Service]
@@ -216,9 +219,17 @@ Restart=on-failure
 WantedBy=multi-user.target
 EOF
 
+# Remove the service installed under the old name, so two services don't
+# fight over the fan GPIO.
+if [ -f "/etc/systemd/system/$LEGACY_SERVICE" ]; then
+	printf "Removing old service: $LEGACY_SERVICE\n"
+	systemctl disable --now "$LEGACY_SERVICE" 2>/dev/null || true
+	rm -f "/etc/systemd/system/$LEGACY_SERVICE"
+fi
+
 printf "Installing service to: $SERVICE_PATH\n"
 echo "$UNIT_FILE" > $SERVICE_PATH
 systemctl daemon-reload
-systemctl enable --no-pager pimoroni-fanshim.service
-systemctl restart --no-pager pimoroni-fanshim.service
-systemctl status --no-pager pimoroni-fanshim.service
+systemctl enable --no-pager $SERVICE_NAME
+systemctl restart --no-pager $SERVICE_NAME
+systemctl status --no-pager $SERVICE_NAME

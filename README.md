@@ -1,161 +1,35 @@
-# Fan Shim for Raspberry Pi
+# FanSHIM
 
-[![Build Status](https://travis-ci.com/pimoroni/fanshim-python.svg?branch=master)](https://travis-ci.com/pimoroni/fanshim-python)
-[![Coverage Status](https://coveralls.io/repos/github/pimoroni/fanshim-python/badge.svg?branch=master)](https://coveralls.io/github/pimoroni/fanshim-python?branch=master)
-[![PyPi Package](https://img.shields.io/pypi/v/fanshim.svg)](https://pypi.python.org/pypi/fanshim)
-[![Python Versions](https://img.shields.io/pypi/pyversions/fanshim.svg)](https://pypi.python.org/pypi/fanshim)
+Turns the Fan SHIM on and off based on the Raspberry Pi CPU temperature. Runs as a systemd service.
 
-# Installing
+Tested on Ubuntu 26.04 with a Raspberry Pi 4.
 
-This fork is updated for modern, Python 3-only systems — Ubuntu 24.04 / 26.04 and
-Raspberry Pi OS Bookworm and newer — where system-wide `pip` is blocked (PEP 668)
-and the classic `RPi.GPIO` library no longer works on current kernels.
+## Install
 
-The installer sets everything up inside an isolated Python virtual environment
-(`/opt/fanshim/venv` by default) and uses [`rpi-lgpio`](https://pypi.org/project/rpi-lgpio/),
-a drop-in replacement for `RPi.GPIO`:
-
-* `sudo apt install git`
-* `git clone https://github.com/pimoroni/fanshim-python`
-* `cd fanshim-python`
-* `sudo ./install.sh`
-
-Run an example (GPIO access needs root):
-
-* `sudo /opt/fanshim/venv/bin/python examples/automatic.py --verbose`
-
-To have the fan run automatically on boot, install the service:
-
-* `cd examples`
-* `sudo ./install-service.sh --venv /opt/fanshim/venv`
-
-To remove everything (service + virtual environment):
-
-* `sudo ./uninstall.sh`
-
-> **Note:** the installer uses `rpi-lgpio`, which works on Raspberry Pi 4, 3,
-> Zero and earlier as well as the Pi 5. It conflicts with the old
-> `python3-rpi.gpio` apt package, so the installer removes that package if it is
-> present. Because everything lives in a virtual environment, your system Python
-> is left untouched.
-
-# Reference
-
-You should first set up an instance of the `FANShim` class, eg:
-
-```python
-from fanshim import FanShim
-fanshim = FanShim()
+```bash
+sudo ./install.sh
+cd examples
+sudo ./install-service.sh --on-threshold 55 --off-threshold 40 --delay 1 --preempt --noled --nobutton
 ```
 
-## Fan
+`install.sh` installs the library into a virtual environment at `/opt/fanshim/venv`. `install-service.sh` creates and starts `fanshim.service`.
 
-Turn the fan on with:
+## Check status
 
-```python
-fanshim.set_fan(True)
+The fan is on/off only. It has no speed sensor.
+
+```bash
+systemctl status fanshim.service                              # service running?
+sudo cat /sys/kernel/debug/gpio | grep -iE 'gpio-18|fan'      # fan on (hi) or off (lo)
+cat /sys/class/thermal/thermal_zone0/temp                     # CPU temp in millidegrees C
 ```
 
-Turn it off with:
+## Uninstall
 
-```python
-fanshim.set_fan(False)
+```bash
+sudo ./uninstall.sh
 ```
 
-You can also toggle the fan with:
+## Credits
 
-```python
-fanshim.toggle_fan()
-```
-
-You can check the status of the fan with:
-
-```python
-fanshim.get_fan() # returns 1 for 'on', 0 for 'off'
-```
-
-## LED
-
-Fan Shim includes one RGB APA-102 LED.
-
-Set it to any colour with:
-
-```python
-fanshim.set_light(r, g, b)
-```
-
-Arguments r, g and b should be numbers between 0 and 255 that describe the colour you want.
-
-For example, full red:
-
-```
-fanshim.set_light(255, 0, 0)
-```
-
-## Button
-
-Fan Shim includes a button, you can bind actions to press, release and hold events.
-
-Do something when the button is pressed:
-
-```python
-@fanshim.on_press()
-def button_pressed():
-    print("The button has been pressed!")
-```
-
-Or when it has been released:
-
-```python
-@fanshim.on_release()
-def button_released(was_held):
-    print("The button has been pressed!")
-```
-
-Or when it's been pressed long enough to trigger a hold:
-
-```python
-fanshim.set_hold_time(2.0)
-
-@fanshim.on_hold()
-def button_held():
-    print("The button was held for 2 seconds")
-```
-
-The function you bind to `on_release()` is passed a `was_held` parameter,
-this lets you know if the button was held down for longer than the configured
-hold time. If you want to bind an action to "press" and another to "hold" you
-should check this flag and perform your action in the `on_release()` handler:
-
-```python
-@fanshim.on_release()
-def button_released(was_held):
-    if was_held:
-        print("Long press!")
-    else:
-        print("Short press!")
-```
-
-To configure the amount of time the button should be held (in seconds), use:
-
-```python
-fanshim.set_hold_time(number_of_seconds)
-```
-
-If you need to stop Fan Shim from polling the button, use:
-
-```python
-fanshim.stop_polling()
-```
-
-You can start it again with:
-
-```python
-fanshim.start_polling()
-```
-
-# Alternate Software
-
-* Fan SHIM in C, using WiringPi - https://github.com/flobernd/raspi-fanshim
-* Fan SHIM in C++, using libgpiod - https://github.com/daviehh/fanshim-cpp
-
+Forked from [pimoroni/fanshim-python](https://github.com/pimoroni/fanshim-python) by Pimoroni Ltd. MIT licensed (see `LICENSE`).
