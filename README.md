@@ -7,16 +7,37 @@
 
 # Installing
 
-Stable library from PyPi:
+This fork is updated for modern, Python 3-only systems — Ubuntu 24.04 / 26.04 and
+Raspberry Pi OS Bookworm and newer — where system-wide `pip` is blocked (PEP 668)
+and the classic `RPi.GPIO` library no longer works on current kernels.
 
-* Just run `sudo pip install fanshim`
+The installer sets everything up inside an isolated Python virtual environment
+(`/opt/fanshim/venv` by default) and uses [`rpi-lgpio`](https://pypi.org/project/rpi-lgpio/),
+a drop-in replacement for `RPi.GPIO`:
 
-Latest/development library from GitHub:
-
-* `apt install git python3-pip`
+* `sudo apt install git`
 * `git clone https://github.com/pimoroni/fanshim-python`
 * `cd fanshim-python`
 * `sudo ./install.sh`
+
+Run an example (GPIO access needs root):
+
+* `sudo /opt/fanshim/venv/bin/python examples/automatic.py --verbose`
+
+To have the fan run automatically on boot, install the service:
+
+* `cd examples`
+* `sudo ./install-service.sh --venv /opt/fanshim/venv`
+
+To remove everything (service + virtual environment):
+
+* `sudo ./uninstall.sh`
+
+> **Note:** the installer uses `rpi-lgpio`, which works on Raspberry Pi 4, 3,
+> Zero and earlier as well as the Pi 5. It conflicts with the old
+> `python3-rpi.gpio` apt package, so the installer removes that package if it is
+> present. Because everything lives in a virtual environment, your system Python
+> is left untouched.
 
 # Reference
 

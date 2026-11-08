@@ -1,131 +1,79 @@
 #!/bin/bash
 
-CONFIG=/boot/config.txt
-DATESTAMP=`date "+%Y-%m-%d-%H-%M-%S"`
-CONFIG_BACKUP=false
-CODENAME=`lsb_release -sc`
+# FanSHIM installer
+#
+# Modernised for Python 3 and PEP 668 "externally-managed-environment"
+# (Ubuntu 24.04 / 26.04, Raspberry Pi OS Bookworm and newer).
+#
+# What changed vs. the original installer:
+#   * Python 2 support dropped entirely (it no longer exists on modern distros).
+#   * No more `python setup.py install` (removed from modern setuptools) or
+#     system-wide `pip install` (blocked by PEP 668). Everything is installed
+#     into an isolated virtual environment instead.
+#   * Uses `rpi-lgpio` (a drop-in replacement for `RPi.GPIO`) so the GPIO code
+#     keeps working on current kernels. The library's Python code is unchanged.
 
-if [ $? -ne 0 ]; then
-	printf "Error parsing configuration...\n"
-	exit 1
-fi
+set -euo pipefail
 
-function do_config_backup {
-	if [ ! $CONFIG_BACKUP == true ]; then
-		CONFIG_BACKUP=true
-		FILENAME="config.preinstall-$LIBRARY_NAME-$DATESTAMP.txt"
-		printf "Backing up $CONFIG to $FILENAME\n"
-		cp $CONFIG $FILENAME
-	fi
-}
+LIBRARY_NAME="fanshim"
+# Location of the isolated virtual environment. Override with FANSHIM_VENV=...
+VENV_DIR="${FANSHIM_VENV:-/opt/fanshim/venv}"
 
-function apt_pkg_install {
-	PACKAGES=()
-	PACKAGES_IN=("$@")
-	for ((i = 0; i < ${#PACKAGES_IN[@]}; i++)); do
-		PACKAGE="${PACKAGES_IN[$i]}"
-		printf "Checking for $PACKAGE\n"
-		dpkg -L $PACKAGE > /dev/null 2>&1
-		if [ "$?" == "1" ]; then
-			PACKAGES+=("$PACKAGE")
-		fi
-	done
-	PACKAGES="${PACKAGES[@]}"
-	if ! [ "$PACKAGES" == "" ]; then
-		echo "Installing missing packages: $PACKAGES"
-		sudo apt update
-		sudo apt install -y $PACKAGES
-	fi
-}
+# Absolute path to the directory this script lives in.
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 
-if [[ $CODENAME != "bullseye" ]]; then
-	apt_pkg_install python-configparser
-fi
+printf "FanSHIM Python Library: Installer\n\n"
 
-CONFIG_VARS=`python - <<EOF
-from configparser import ConfigParser
-c = ConfigParser()
-c.read('library/setup.cfg')
-p = dict(c['pimoroni'])
-# Convert multi-line config entries into bash arrays
-for k in p.keys():
-    fmt = '"{}"'
-    if '\n' in p[k]:
-        p[k] = "'\n\t'".join(p[k].split('\n')[1:])
-        fmt = "('{}')"
-    p[k] = fmt.format(p[k])
-print("""
-LIBRARY_NAME="{name}"
-LIBRARY_VERSION="{version}"
-""".format(**c['metadata']))
-print("""
-PY3_DEPS={py3deps}
-PY2_DEPS={py2deps}
-SETUP_CMDS={commands}
-CONFIG_TXT={configtxt}
-""".format(**p))
-EOF`
-
-eval $CONFIG_VARS
-
-printf "$LIBRARY_NAME $LIBRARY_VERSION Python Library: Installer\n\n"
-
-if [ $(id -u) -ne 0 ]; then
+if [ "$(id -u)" -ne 0 ]; then
 	printf "Script must be run as root. Try 'sudo ./install.sh'\n"
 	exit 1
 fi
 
-cd library
-
-if [[ $CODENAME != "bullseye" ]]; then
-	printf "Installing for Python 2..\n"
-
-	printf "Checking for rpi.gpio>=0.7.0 (for Pi 4 support)\n"
-	python - <<EOF
-import RPi.GPIO as GPIO
-from pkg_resources import parse_version
-import sys
-if parse_version(GPIO.VERSION) < parse_version('0.7.0'):
-    sys.exit(1)
-EOF
-
-	if [ $? -ne 0 ]; then
-		printf "Installing rpi.gpio\n"
-		pip install --upgrade "rpi.gpio>=0.7.0"
-	else
-		printf "rpi.gpio >= 0.7.0 already installed\n"
-	fi
-
-	apt_pkg_install "${PY2_DEPS[@]}"
-	python setup.py install
+if ! command -v apt >/dev/null 2>&1; then
+	printf "This installer expects a Debian/Ubuntu based system (apt not found).\n"
+	printf "On other distributions, install python3/python3-venv manually and then run:\n"
+	printf "    python3 -m venv %s\n" "$VENV_DIR"
+	printf "    %s/bin/pip install rpi-lgpio apa102 psutil %s/library\n" "$VENV_DIR" "$DIR"
+	exit 1
 fi
 
-if [ -f "/usr/bin/python3" ]; then
-	printf "Installing for Python 3..\n"
-	apt_pkg_install "${PY3_DEPS[@]}"
-	python3 setup.py install
+# 1. System build/runtime dependencies via apt.
+printf "Installing system dependencies...\n"
+apt update
+apt install -y python3 python3-venv python3-dev python3-pip build-essential
+
+# The classic python3-rpi.gpio package clashes with rpi-lgpio and no longer
+# works on current kernels. We only touch it if it is actually installed.
+if dpkg -s python3-rpi.gpio >/dev/null 2>&1; then
+	printf "Removing obsolete system package python3-rpi.gpio (replaced by rpi-lgpio)...\n"
+	apt remove -y python3-rpi.gpio || true
 fi
 
-cd ..
+# 2. Create an isolated virtual environment (PEP 668 safe).
+if [ ! -d "$VENV_DIR" ]; then
+	printf "Creating virtual environment at %s\n" "$VENV_DIR"
+	mkdir -p "$(dirname "$VENV_DIR")"
+	python3 -m venv "$VENV_DIR"
+fi
 
-for ((i = 0; i < ${#SETUP_CMDS[@]}; i++)); do
-	CMD="${SETUP_CMDS[$i]}"
-	# Attempt to catch anything that touches /boot/config.txt and trigger a backup
-	if [[ "$CMD" == *"raspi-config"* ]] || [[ "$CMD" == *"$CONFIG"* ]] || [[ "$CMD" == *"\$CONFIG"* ]]; then
-		do_config_backup
-	fi
-	eval $CMD
-done
+# 3. Install the library and its dependencies into the venv.
+printf "Installing %s and dependencies into the virtual environment...\n" "$LIBRARY_NAME"
+"$VENV_DIR/bin/pip" install --upgrade pip setuptools wheel
+# rpi-lgpio provides the RPi.GPIO API on top of lgpio (works on current kernels).
+# apa102 drives the RGB LED; psutil is used by the automatic.py example/service.
+"$VENV_DIR/bin/pip" install --upgrade rpi-lgpio apa102 psutil
+"$VENV_DIR/bin/pip" install --upgrade "$DIR/library"
 
-for ((i = 0; i < ${#CONFIG_TXT[@]}; i++)); do
-	CONFIG_LINE="${CONFIG_TXT[$i]}"
-	if ! [ "$CONFIG_LINE" == "" ]; then
-		do_config_backup
-		sed -i 's/^#$CONFIG_LINE/$CONFIG_LINE/' $CONFIG
-		if ! grep -q -E "^$CONFIG_LINE" $CONFIG; then
-			printf "$CONFIG_LINE\n" >> $CONFIG
-		fi
-	fi
-done
+# 4. Quick sanity check that the package imports.
+if "$VENV_DIR/bin/python" -c "import fanshim" >/dev/null 2>&1; then
+	printf "\nDone! '%s' installed successfully.\n" "$LIBRARY_NAME"
+else
+	printf "\nInstalled, but 'import fanshim' failed. Please check the output above.\n"
+	exit 1
+fi
 
-printf "Done!\n"
+printf "\nFanSHIM lives in the virtual environment: %s\n\n" "$VENV_DIR"
+printf "Try an example (needs root for GPIO access):\n"
+printf "    sudo %s/bin/python %s/examples/automatic.py --verbose\n\n" "$VENV_DIR" "$DIR"
+printf "Install the background service (fan runs automatically on boot):\n"
+printf "    cd %s/examples && sudo ./install-service.sh --venv %s\n\n" "$DIR" "$VENV_DIR"

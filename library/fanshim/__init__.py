@@ -1,6 +1,5 @@
 import RPi.GPIO as GPIO
 import time
-import apa102
 import atexit
 from threading import Thread
 
@@ -35,6 +34,9 @@ class FanShim():
             GPIO.setup(self._pin_button, GPIO.IN, pull_up_down=GPIO.PUD_UP)
 
         if not self._disable_led:
+            # Imported lazily so that a --noled setup does not depend on apa102
+            # (and keeps working even if the LED driver is unavailable).
+            import apa102
             self._led = apa102.APA102(1, 15, 14, None, brightness=0.05)
 
         atexit.register(self._cleanup)

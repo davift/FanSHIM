@@ -11,9 +11,10 @@ NOLED="no"
 NOBUTTON="no"
 BRIGHTNESS=255
 EXTCOLOURS="no"
-PYTHON="python3"
-PIP="pip3"
-PSUTIL_MIN_VERSION="5.6.7"
+
+# FanSHIM is installed into an isolated virtual environment by install.sh.
+# Default to that location; override with --venv <path> or FANSHIM_VENV=...
+VENV="${FANSHIM_VENV:-/opt/fanshim/venv}"
 
 ON_THRESHOLD_SET=false
 OFF_THRESHOLD_SET=false
@@ -21,9 +22,6 @@ OFF_THRESHOLD_SET=false
 SERVICE_PATH=/etc/systemd/system/pimoroni-fanshim.service
 
 USAGE="sudo ./install-service.sh --off-threshold <n> --on-threshold <n> --delay <n> --brightness <n> --low-temp <n> --high-temp <n> --venv <python_virtual_environment> (--preempt) (--noled) (--nobutton) (--extended-colours)"
-
-# Convert Python path to absolute for systemd
-PYTHON=`type -P $PYTHON`
 
 while [[ $# -gt 0 ]]; do
 	K="$1"
@@ -88,9 +86,7 @@ while [[ $# -gt 0 ]]; do
 		shift
 		;;
 	--venv)
-		VENV="$(realpath ${2%/})/bin"
-		PYTHON="$VENV/python3"
-		PIP="$VENV/pip3"
+		VENV="$(realpath "${2%/}")"
 		shift
 		shift
 		;;
@@ -114,24 +110,26 @@ while [[ $# -gt 0 ]]; do
 	esac
 done
 
-if ! ( type -P "$PYTHON" > /dev/null ) ; then
-	if [ "$PYTHON" == "python3" ]; then
-		printf "Fan SHIM controller requires Python 3\n"
-		printf "You should run: 'sudo apt install python3'\n"
-	else
-		printf "Cannot find virtual environment.\n"
-		printf "Set to base of virtual environment i.e. <venv>/bin/python3.\n"
-	fi
+if [ "$(id -u)" -ne 0 ]; then
+	printf "Script must be run as root. Try 'sudo ./install-service.sh'\n"
 	exit 1
 fi
 
-if ! ( type -P "$PIP" > /dev/null ) ; then
-	printf "Fan SHIM controller requires Python 3 pip\n"
-	if [ "$PIP" == "pip3" ]; then
-		printf "You should run: 'sudo apt install python3-pip'\n"
-	else
-		printf "Ensure that your virtual environment has pip3 installed.\n"
-	fi
+PYTHON="$VENV/bin/python3"
+
+if ! [ -x "$PYTHON" ]; then
+	printf "Could not find a FanSHIM virtual environment at: %s\n" "$VENV"
+	printf "Run the library installer first:\n"
+	printf "    cd %s && sudo ./install.sh\n" "$(dirname "$DIR")"
+	printf "or pass an existing environment with --venv <path>.\n"
+	exit 1
+fi
+
+# Make sure the fanshim package is actually importable in this environment.
+if ! "$PYTHON" -c "import fanshim" >/dev/null 2>&1; then
+	printf "The 'fanshim' package is not installed in: %s\n" "$VENV"
+	printf "Run the library installer first:\n"
+	printf "    cd %s && sudo ./install.sh\n" "$(dirname "$DIR")"
 	exit 1
 fi
 
@@ -193,6 +191,7 @@ Disable LED:      $NOLED
 Disable Button:   $NOBUTTON
 Brightness:       $BRIGHTNESS
 Extended Colours: $EXTCOLOURS
+Python:           $PYTHON
 
 To change these options, run:
 $USAGE
@@ -209,58 +208,15 @@ After=multi-user.target
 
 [Service]
 Type=simple
-WorkingDirectory=$(pwd)
-ExecStart=$PYTHON $(pwd)/automatic.py --on-threshold $ON_THRESHOLD --off-threshold $OFF_THRESHOLD --low-temp $LOW_TEMP --high-temp $HIGH_TEMP --delay $DELAY --brightness $BRIGHTNESS $EXTRA_ARGS
+WorkingDirectory=$DIR
+ExecStart=$PYTHON $DIR/automatic.py --on-threshold $ON_THRESHOLD --off-threshold $OFF_THRESHOLD --low-temp $LOW_TEMP --high-temp $HIGH_TEMP --delay $DELAY --brightness $BRIGHTNESS $EXTRA_ARGS
 Restart=on-failure
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-printf "Checking for rpi.gpio >= 0.7.0 (for Pi 4 support)\n"
-$PYTHON - <<EOF
-import RPi.GPIO as GPIO
-from pkg_resources import parse_version
-import sys
-if parse_version(GPIO.VERSION) < parse_version('0.7.0'):
-    sys.exit(1)
-EOF
-
-if [ $? -ne 0 ]; then
-	printf "Installing rpi.gpio\n"
-	$PIP install --upgrade "rpi.gpio>=0.7.0"
-else
-	printf "rpi.gpio >= 0.7.0 already installed\n"
-fi
-
-printf "Checking for Fan SHIM\n"
-$PYTHON - > /dev/null 2>&1 <<EOF
-import fanshim
-EOF
-
-if [ $? -ne 0 ]; then
-	printf "Installing Fan SHIM\n"
-	$PIP install fanshim
-else
-	printf "Fan SHIM already installed\n"
-fi
-
-printf "Checking for psutil >= $PSUTIL_MIN_VERSION\n"
-$PYTHON - > /dev/null 2>&1 <<EOF
-import sys
-import psutil
-from pkg_resources import parse_version
-sys.exit(not parse_version(psutil.__version__) >= parse_version('$PSUTIL_MIN_VERSION'))
-EOF
-
-if [ $? -ne 0 ]; then
-	printf "Installing psutil\n"
-	$PIP install --ignore-installed psutil
-else
-	printf "psutil >= $PSUTIL_MIN_VERSION already installed\n"
-fi
-
-printf "\nInstalling service to: $SERVICE_PATH\n"
+printf "Installing service to: $SERVICE_PATH\n"
 echo "$UNIT_FILE" > $SERVICE_PATH
 systemctl daemon-reload
 systemctl enable --no-pager pimoroni-fanshim.service
